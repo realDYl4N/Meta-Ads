@@ -93,6 +93,12 @@
       from { opacity: 1; }
       to { opacity: 0; }
     }
+    .line-clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
   </style>
 </head>
 <body class="text-white">
@@ -138,15 +144,51 @@
   <!-- Main content -->
   <main class="max-w-7xl mx-auto px-6 py-8">
 
-    <!-- Ads Tab (placeholder) -->
+    <!-- Ads Tab -->
     <section id="panel-ads" class="hidden">
-      <div class="glass-card rounded-xl p-12 text-center">
-        <svg class="w-12 h-12 mx-auto text-white/20 mb-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+      <!-- Filters -->
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold">Ads</h2>
+          <p class="text-sm text-white/40 mt-1" id="ads-count-label">Scraped ad creatives</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <select id="ads-filter-brand" onchange="loadAds()" class="px-3 py-2 rounded-lg text-sm text-white min-w-[160px]">
+            <option value="">All Brands</option>
+          </select>
+          <select id="ads-filter-media" onchange="loadAds()" class="px-3 py-2 rounded-lg text-sm text-white">
+            <option value="">All Media</option>
+            <option value="image">Images</option>
+            <option value="video">Videos</option>
+          </select>
+          <select id="ads-filter-sort" onchange="loadAds()" class="px-3 py-2 rounded-lg text-sm text-white">
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="top_ranked">Top Ranked</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Loading -->
+      <div id="ads-loading" class="p-12 text-center text-white/40">
+        <svg class="w-6 h-6 mx-auto mb-2 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        Loading ads...
+      </div>
+
+      <!-- Empty state -->
+      <div id="ads-empty" class="hidden glass-card rounded-xl p-12 text-center">
+        <svg class="w-12 h-12 mx-auto text-white/15 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"/>
         </svg>
-        <h2 class="text-lg font-semibold text-white/60">Ads View</h2>
-        <p class="text-sm text-white/30 mt-1">Coming soon — add brands first, then scrape their ads.</p>
+        <p class="text-white/40 text-sm">No ads scraped yet</p>
+        <p class="text-white/25 text-xs mt-1">Go to the Brands tab and click "Scrape" on a brand to pull their ads.</p>
       </div>
+
+      <!-- Ads grid -->
+      <div id="ads-grid" class="hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"></div>
     </section>
 
     <!-- Brands Tab -->
@@ -280,12 +322,29 @@
     </div>
   </div>
 
+  <!-- Ad Detail Modal -->
+  <div id="ad-modal" class="fixed inset-0 z-50 hidden items-center justify-center modal-overlay">
+    <div class="glass-card rounded-2xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col fade-in" style="background: rgba(15, 26, 32, 0.95);">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
+        <h3 id="ad-modal-title" class="text-base font-semibold">Ad Details</h3>
+        <button onclick="closeAdModal()" class="text-white/40 hover:text-white transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="overflow-y-auto p-6" id="ad-modal-body"></div>
+    </div>
+  </div>
+
   <script>
     // ============================================
     // STATE
     // ============================================
     let brands = [];
+    let ads = [];
     let deleteTargetId = null;
+    const activeJobs = {}; // brandId -> { jobId, interval }
 
     // ============================================
     // TABS
@@ -303,6 +362,11 @@
       tabEl.classList.remove('text-white/50', 'border-transparent');
       panelEl.classList.remove('hidden');
       panelEl.classList.add('fade-in');
+
+      if (tab === 'ads') {
+        populateBrandFilter();
+        loadAds();
+      }
     }
 
     // ============================================
@@ -377,6 +441,12 @@
           </td>
           <td class="px-5 py-3.5 text-right">
             <div class="flex items-center justify-end gap-1">
+              <button id="scrape-btn-${brand.id}" onclick="startScrape(${brand.id})" title="Scrape Ads"
+                class="px-2.5 py-1 rounded-md text-xs font-medium bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors flex items-center gap-1.5 ${activeJobs[brand.id] ? 'opacity-50 pointer-events-none' : ''}">
+                ${activeJobs[brand.id]
+                  ? '<svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Scraping...'
+                  : '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg> Scrape'}
+              </button>
               <button onclick="openEditModal(${brand.id})" title="Edit"
                 class="p-1.5 rounded-md hover:bg-white/10 text-white/40 hover:text-white transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -499,6 +569,262 @@
     }
 
     // ============================================
+    // SCRAPING
+    // ============================================
+    async function startScrape(brandId) {
+      if (activeJobs[brandId]) return;
+
+      const brand = brands.find(b => b.id === brandId);
+      try {
+        const res = await fetch(`/api/brands/${brandId}/scrape`, { method: 'POST' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          showToast(data.error || 'Failed to start scrape', 'error');
+          return;
+        }
+
+        showToast(`Scraping ${brand?.name || 'brand'}...`, 'info');
+        activeJobs[brandId] = { jobId: data.job_id };
+        renderBrands();
+
+        // Poll for completion every 5 seconds
+        activeJobs[brandId].interval = setInterval(() => pollScrapeJob(brandId, data.job_id), 5000);
+      } catch (err) {
+        console.error('Start scrape error:', err);
+        showToast('Failed to start scrape', 'error');
+      }
+    }
+
+    async function pollScrapeJob(brandId, jobId) {
+      const brand = brands.find(b => b.id === brandId);
+      try {
+        const res = await fetch(`/api/scrape-jobs/${jobId}/check`, { method: 'POST' });
+        const data = await res.json();
+
+        if (data.status === 'completed') {
+          clearInterval(activeJobs[brandId]?.interval);
+          delete activeJobs[brandId];
+          renderBrands();
+          showToast(`${brand?.name || 'Brand'}: found ${data.ads_found} ads, saved ${data.ads_saved} new`, 'success');
+        } else if (data.status === 'failed') {
+          clearInterval(activeJobs[brandId]?.interval);
+          delete activeJobs[brandId];
+          renderBrands();
+          showToast(`Scrape failed: ${data.error || 'Unknown error'}`, 'error');
+        }
+        // If still running, keep polling
+      } catch (err) {
+        console.error('Poll scrape error:', err);
+        clearInterval(activeJobs[brandId]?.interval);
+        delete activeJobs[brandId];
+        renderBrands();
+        showToast('Lost connection to scrape job', 'error');
+      }
+    }
+
+    // ============================================
+    // ADS
+    // ============================================
+    function getAdMedia(ad) {
+      try {
+        const raw = ad.raw_data ? JSON.parse(ad.raw_data) : {};
+        const card = raw.snapshot?.cards?.[0] || {};
+        const videoUrl = card.videoHdUrl || card.videoSdUrl || null;
+        const imageUrl = card.originalImageUrl || card.resizedImageUrl || ad.ad_snapshot_url || null;
+        return { isVideo: !!videoUrl, videoUrl, imageUrl, card, raw };
+      } catch { return { isVideo: false, videoUrl: null, imageUrl: null, card: {}, raw: {} }; }
+    }
+
+    function populateBrandFilter() {
+      const sel = document.getElementById('ads-filter-brand');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">All Brands</option>' +
+        brands.map(b => `<option value="${b.id}" ${String(b.id) === current ? 'selected' : ''}>${esc(b.name)}</option>`).join('');
+    }
+
+    async function loadAds() {
+      const brandId = document.getElementById('ads-filter-brand').value;
+      const mediaType = document.getElementById('ads-filter-media').value;
+      const sort = document.getElementById('ads-filter-sort').value;
+
+      document.getElementById('ads-loading').classList.remove('hidden');
+      document.getElementById('ads-empty').classList.add('hidden');
+      document.getElementById('ads-grid').classList.add('hidden');
+
+      try {
+        let url = `/api/ads?sort=${sort}&limit=200`;
+        if (brandId) url += `&brand_id=${brandId}`;
+        if (mediaType) url += `&media_type=${mediaType}`;
+
+        const res = await fetch(url);
+        ads = await res.json();
+        renderAds();
+      } catch (err) {
+        console.error('Failed to load ads:', err);
+        showToast('Failed to load ads', 'error');
+      }
+    }
+
+    function renderAds() {
+      const loading = document.getElementById('ads-loading');
+      const empty = document.getElementById('ads-empty');
+      const grid = document.getElementById('ads-grid');
+      const label = document.getElementById('ads-count-label');
+
+      loading.classList.add('hidden');
+
+      // Filter out mock ads
+      const realAds = ads.filter(a => !a.ad_library_id?.startsWith('mock_'));
+
+      if (realAds.length === 0) {
+        empty.classList.remove('hidden');
+        grid.classList.add('hidden');
+        label.textContent = 'Scraped ad creatives';
+        return;
+      }
+
+      empty.classList.add('hidden');
+      grid.classList.remove('hidden');
+      label.textContent = `${realAds.length} ad${realAds.length !== 1 ? 's' : ''}`;
+
+      grid.innerHTML = realAds.map(ad => {
+        const { isVideo, imageUrl } = getAdMedia(ad);
+        const headline = ad.ad_creative_link_titles || ad.ad_creative_bodies || '';
+        const truncated = headline.length > 60 ? headline.slice(0, 60) + '...' : headline;
+
+        return `
+          <div onclick="openAdModal(${ad.id})"
+            class="glass-card rounded-xl overflow-hidden cursor-pointer hover:border-white/20 transition-all hover:scale-[1.02] group">
+            <!-- Thumbnail (9:16) -->
+            <div class="relative" style="aspect-ratio: 9/16;">
+              ${imageUrl
+                ? `<img src="${esc(imageUrl)}" alt="" class="w-full h-full object-cover" loading="lazy"
+                     onerror="this.parentElement.innerHTML='<div class=\\'flex items-center justify-center w-full h-full bg-white/5 text-white/20\\'><svg class=\\'w-8 h-8\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\' viewBox=\\'0 0 24 24\\'><path stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\' d=\\'M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z\\'/></svg></div>'">`
+                : `<div class="flex items-center justify-center w-full h-full bg-white/5 text-white/20">
+                     <svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                       <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"/>
+                     </svg>
+                   </div>`}
+              <!-- Media type badge -->
+              <div class="absolute top-2 left-2">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${isVideo ? 'bg-purple-500/80 text-white' : 'bg-white/20 text-white/80'}">
+                  ${isVideo ? 'Video' : 'Image'}
+                </span>
+              </div>
+              <!-- Hover overlay -->
+              <div class="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors"></div>
+            </div>
+            <!-- Info -->
+            <div class="p-3">
+              <p class="text-[11px] text-meta-blue font-medium mb-0.5">${esc(ad.brand_name || ad.page_name || '')}</p>
+              <p class="text-xs text-white/70 leading-snug line-clamp-2">${esc(truncated)}</p>
+              ${ad.start_date ? `<p class="text-[10px] text-white/30 mt-1.5">${esc(ad.start_date)}</p>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ============================================
+    // AD DETAIL MODAL
+    // ============================================
+    function openAdModal(adId) {
+      const ad = ads.find(a => a.id === adId);
+      if (!ad) return;
+
+      const { isVideo, videoUrl, imageUrl, card, raw } = getAdMedia(ad);
+      const adLibraryId = ad.ad_library_id;
+      const adLibraryUrl = adLibraryId
+        ? `https://www.facebook.com/ads/library/?id=${adLibraryId}`
+        : null;
+
+      const body = ad.ad_creative_bodies || card.body || '';
+      const title = ad.ad_creative_link_titles || card.title || '';
+      const caption = ad.ad_creative_link_captions || card.caption || '';
+      const linkDesc = ad.ad_creative_link_descriptions || card.linkDescription || '';
+      const cta = card.ctaText || card.linkUrl || '';
+
+      document.getElementById('ad-modal-title').textContent = ad.brand_name || ad.page_name || 'Ad Details';
+
+      document.getElementById('ad-modal-body').innerHTML = `
+        <div class="flex flex-col md:flex-row gap-6">
+          <!-- Media -->
+          <div class="md:w-1/2 shrink-0">
+            <div class="rounded-lg overflow-hidden" style="aspect-ratio: 9/16;">
+              ${isVideo && videoUrl
+                ? `<video src="${esc(videoUrl)}" poster="${esc(imageUrl || '')}" controls class="w-full h-full object-cover"></video>`
+                : imageUrl
+                  ? `<img src="${esc(imageUrl)}" alt="" class="w-full h-full object-cover">`
+                  : `<div class="flex items-center justify-center w-full h-full bg-white/5 text-white/20">No preview</div>`}
+            </div>
+          </div>
+          <!-- Details -->
+          <div class="md:w-1/2 space-y-4">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${isVideo ? 'bg-purple-500/80 text-white' : 'bg-white/20 text-white/80'}">
+                ${isVideo ? 'Video' : 'Image'}
+              </span>
+              ${ad.start_date ? `<span class="text-xs text-white/30">Started ${esc(ad.start_date)}</span>` : ''}
+            </div>
+
+            ${title ? `
+              <div>
+                <p class="text-[10px] uppercase tracking-wider text-white/30 mb-1">Headline</p>
+                <p class="text-sm text-white font-medium">${esc(title)}</p>
+              </div>` : ''}
+
+            ${body ? `
+              <div>
+                <p class="text-[10px] uppercase tracking-wider text-white/30 mb-1">Ad Copy</p>
+                <p class="text-sm text-white/80 whitespace-pre-line leading-relaxed">${esc(body)}</p>
+              </div>` : ''}
+
+            ${caption ? `
+              <div>
+                <p class="text-[10px] uppercase tracking-wider text-white/30 mb-1">Caption</p>
+                <p class="text-sm text-white/60">${esc(caption)}</p>
+              </div>` : ''}
+
+            ${linkDesc ? `
+              <div>
+                <p class="text-[10px] uppercase tracking-wider text-white/30 mb-1">Link Description</p>
+                <p class="text-sm text-white/60">${esc(linkDesc)}</p>
+              </div>` : ''}
+
+            ${cta ? `
+              <div>
+                <p class="text-[10px] uppercase tracking-wider text-white/30 mb-1">CTA</p>
+                <p class="text-sm text-white/80 font-medium">${esc(cta)}</p>
+              </div>` : ''}
+
+            <div class="pt-2 flex gap-2">
+              ${adLibraryUrl ? `
+                <a href="${esc(adLibraryUrl)}" target="_blank" rel="noopener"
+                  class="btn-primary px-4 py-2 rounded-lg text-xs font-medium inline-flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>
+                  </svg>
+                  View in Ad Library
+                </a>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('ad-modal').classList.remove('hidden');
+      document.getElementById('ad-modal').classList.add('flex');
+    }
+
+    function closeAdModal() {
+      document.getElementById('ad-modal').classList.add('hidden');
+      document.getElementById('ad-modal').classList.remove('flex');
+      // Pause any playing video
+      const video = document.querySelector('#ad-modal-body video');
+      if (video) video.pause();
+    }
+
+    // ============================================
     // HEALTH CHECK
     // ============================================
     async function checkHealth() {
@@ -530,6 +856,7 @@
       if (e.key === 'Escape') {
         closeBrandModal();
         closeDeleteModal();
+        closeAdModal();
       }
     });
 
@@ -539,6 +866,9 @@
     });
     document.getElementById('delete-modal').addEventListener('click', e => {
       if (e.target === e.currentTarget) closeDeleteModal();
+    });
+    document.getElementById('ad-modal').addEventListener('click', e => {
+      if (e.target === e.currentTarget) closeAdModal();
     });
 
     // ============================================
