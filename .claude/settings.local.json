@@ -13,7 +13,11 @@
       "Bash(while read line)",
       "Bash(do echo \"$line\")",
       "Bash(done)",
-      "Bash(xargs kill:*)"
+      "Bash(xargs kill:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npm rebuild:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(git push:*)"
     ]
   }
 }
